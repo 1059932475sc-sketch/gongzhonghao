@@ -1,0 +1,63 @@
+name: 📰 AI资讯情报官 - 每日自动运行
+
+on:
+  schedule:
+    # 每天早上 6:00 UTC = 北京时间 14:00
+    - cron: '0 22 * * *'
+  # 也可以手动触发
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    name: 抓取 → 分析 → 生成文章
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 安装依赖
+        run: |
+          pip install -r ai-news-assistant/requirements.txt
+          pip install python-dotenv
+
+      - name: 创建 .env 文件（从 Secrets）
+        run: |
+          cat > ai-news-assistant/.env << 'ENVEOF'
+          OPENAI_API_KEY=${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
+          LLM_MODEL=${{ secrets.LLM_MODEL }}
+          ENVEOF
+          echo "✅ .env 文件已创建"
+
+      - name: 运行情报流水线
+        run: |
+          cd ai-news-assistant
+          python3 main.py 2>&1
+          echo "✅ 流水线执行完毕"
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+
+      - name: 上传生成的文章
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-news-articles
+          path: ai-news-assistant/output/
+          retention-days: 7
+
+      - name: 推送生成的文章到仓库
+        run: |
+          git config user.name "AI News Bot"
+          git config user.email "bot@ai-news-assistant"
+          git add ai-news-assistant/output/ ai-news-assistant/data/
+          git diff --cached --quiet || git commit -m "📰 每日 AI 资讯简报 $(date +'%Y-%m-%d')"
+          git push

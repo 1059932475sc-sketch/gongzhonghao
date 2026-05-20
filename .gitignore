@@ -1,0 +1,32 @@
+# AI 资讯情报官 - .gitignore
+
+# API Keys 和敏感信息
+.env
+*.env.local
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# macOS 系统文件
+.DS_Store
+Thumbs.db
+
+# 项目缓存数据（不需要同步到 GitHub）
+# 每个机器独立维护
+ai-news-assistant/data/seen_ids.json
+ai-news-assistant/data/raw_*.json
+ai-news-assistant/data/trends_*.json
+ai-news-assistant/data/report_*.json
+ai-news-assistant/data/pipeline.log
+ai-news-assistant/cron.log
+ai-news-assistant/cron.err
+ai-news-assistant/cache/
+
+# 生成的文章（GitHub Actions 会自动生成）
+# 但保留 output 目录结构
+ai-news-assistant/output/*.md
+!ai-news-assistant/output/.gitkeep
