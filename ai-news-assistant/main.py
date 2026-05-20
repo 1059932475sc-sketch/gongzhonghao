@@ -15,6 +15,7 @@ from scraper import fetch_all
 from analyzer import detect_trends
 from generator import generate_daily_brief, generate_deep_dive, save_article
 from publisher import auto_publish, generate_publish_guide
+from feishu_publisher import send_news_notification
 
 logging.basicConfig(
     level=logging.INFO,
@@ -27,7 +28,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run_pipeline(enable_publish: bool = False) -> dict:
+def run_pipeline(enable_publish: bool = False, enable_feishu: bool = False) -> dict:
     """
     执行完整情报流水线
 
@@ -131,6 +132,11 @@ def run_pipeline(enable_publish: bool = False) -> dict:
                 content = Path(article["path"]).read_text(encoding="utf-8")
                 success = auto_publish(title, content, article["path"])
                 report["发布状态"] = "已尝试发布" if success else "发布失败"
+    elif enable_feishu:
+        # 飞书推送模式
+        logger.info("\n📤 === 飞书推送 ===")
+        feishu_ok = send_news_notification(items, articles_generated)
+        report["发布状态"] = "飞书推送成功" if feishu_ok else "飞书推送失败"
     else:
         # 生成发布指南
         for article in articles_generated:
@@ -176,7 +182,7 @@ def print_report(report: dict):
 
     print(f"\n📤 发布状态: {report['发布状态']}")
     print("=" * 50)
-    print("💡 提示: 直接运行 python main.py --publish 尝试自动发布")
+    print("💡 提示: 直接运行 python main.py --feishu 推送到飞书")
     print("=" * 50)
 
 
@@ -184,5 +190,6 @@ if __name__ == "__main__":
     import sys
 
     enable_publish = "--publish" in sys.argv
-    report = run_pipeline(enable_publish=enable_publish)
+    enable_feishu = "--feishu" in sys.argv
+    report = run_pipeline(enable_publish=enable_publish, enable_feishu=enable_feishu)
     print_report(report)
