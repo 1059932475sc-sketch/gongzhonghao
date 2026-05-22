@@ -2,8 +2,10 @@ name: 📰 AI资讯情报官 - 每日自动运行
 
 on:
   schedule:
-    # 每天早上 8:00 北京时间 (UTC 0:00)
+    # 早上 8:00 北京时间 (UTC 0:00)
     - cron: '0 0 * * *'
+    # 下午 2:00 北京时间 (UTC 6:00) — 备用，遇 GitHub cron 跳过时有兜底
+    - cron: '0 6 * * *'
   # 也可以手动触发
   workflow_dispatch:
 
@@ -16,6 +18,28 @@ jobs:
     steps:
       - name: 检出代码
         uses: actions/checkout@v6
+
+      - name: 检查今日是否已运行（去重锁）
+        id: check_run
+        run: |
+          if [ -f ai-news-assistant/.last-run ]; then
+            LAST_RUN=$(cat ai-news-assistant/.last-run)
+            TODAY=$(date +%Y-%m-%d)
+            if [ "$LAST_RUN" = "$TODAY" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "✅ 今日 ($TODAY) 已运行过，跳过本次"
+            else
+              echo "skip=false" >> "$GITHUB_OUTPUT"
+              echo "📅 上次运行: $LAST_RUN，今日尚未运行，继续执行"
+            fi
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "📅 暂无运行记录，继续执行"
+          fi
+
+      - name: 跳过（今日已运行）
+        if: steps.check_run.outputs.skip == 'true'
+        run: echo "✅ 跳过" && exit 0
 
       - name: 设置 Python
         uses: actions/setup-python@v6
@@ -48,6 +72,16 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+
+      - name: 记录今日运行时间戳
+        if: success()
+        run: |
+          date +%Y-%m-%d > ai-news-assistant/.last-run
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add ai-news-assistant/.last-run
+          git commit -m "chore: update last-run date [skip ci]"
+          git push
 
       - name: 上传生成的文章
         uses: actions/upload-artifact@v7
