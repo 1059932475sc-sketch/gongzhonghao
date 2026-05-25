@@ -4,8 +4,7 @@ on:
   schedule:
     # 早上 8:00 北京时间 (UTC 0:00)
     - cron: '0 0 * * *'
-    # 下午 2:00 北京时间 (UTC 6:00) — 备用，遇 GitHub cron 跳过时有兜底
-    - cron: '0 6 * * *'
+    # 仅早上 8:00 运行一次
   # 也可以手动触发
   workflow_dispatch:
 
