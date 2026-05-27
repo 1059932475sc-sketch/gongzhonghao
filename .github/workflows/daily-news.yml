@@ -72,6 +72,14 @@ jobs:
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
 
+      - name: 📊 发送每日市场简报到飞书
+        run: |
+          cd ai-news-assistant
+          python3 market_reporter.py 2>&1
+          echo "✅ 市场简报已发送"
+        env:
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+
       - name: 记录今日运行时间戳
         if: success()
         run: |
