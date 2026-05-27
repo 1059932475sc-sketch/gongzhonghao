@@ -15,6 +15,10 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
+# 虚拟环境
+.venv/
+venv/
+
 # 项目缓存数据（不需要同步到 GitHub）
 # 每个机器独立维护
 ai-news-assistant/data/seen_ids.json
