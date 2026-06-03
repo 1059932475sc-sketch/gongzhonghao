@@ -6,6 +6,7 @@ AI 资讯情报官 - 飞书推送模块
 
 import json
 import logging
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -59,7 +60,30 @@ def _send_text(text: str) -> bool:
         return False
 
 
-def send_news_notification(items: list[dict], articles: list[dict]) -> bool:
+def send_pipeline_status(title: str, lines: list[str]) -> bool:
+    """发送流程状态文本，适合失败告警或空结果提示。"""
+    body = "\n".join([title, ""] + [line for line in lines if line])
+    return _send_text(body)
+
+
+def _to_feishu_readable_text(markdown_text: str) -> str:
+    """把公众号 Markdown 草稿转成飞书里更容易直接阅读/复制的纯文本。"""
+    text = markdown_text
+    text = re.sub(r"^#\s+", "", text, flags=re.M)
+    text = re.sub(r"^##\s+", "\n", text, flags=re.M)
+    text = re.sub(r"^###\s+", "\n", text, flags=re.M)
+    text = text.replace("```text\n", "").replace("```", "")
+    text = text.replace("**", "")
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def send_news_notification(
+    items: list[dict],
+    articles: list[dict],
+    selections: list[dict] = None,
+    draft_results: list[dict] = None,
+) -> bool:
     """
     发送今日 AI 资讯简报到飞书
 
@@ -73,10 +97,11 @@ def send_news_notification(items: list[dict], articles: list[dict]) -> bool:
 
     all_ok = True
 
-    # ---- 第一部分：消息卡片（概览） ----
-    card = _build_empty_card() if not items else _build_news_card(items, articles)
-    if _send_card(card):
-        logger.info("✅ 资讯概览卡片已发送")
+    # ---- 第一部分：纯文本运营摘要 ----
+    # 飞书互动卡片容易限频；用户更需要直接在飞书读到内容，所以默认发纯文本。
+    summary = _build_text_summary(items, articles, selections or [], draft_results or [])
+    if _send_text(summary):
+        logger.info("✅ 运营摘要已发送")
     else:
         all_ok = False
 
@@ -101,26 +126,38 @@ def send_news_notification(items: list[dict], articles: list[dict]) -> bool:
                 break
         title = title_line or art["topic"]
 
-        # 飞书 webhook 文本消息有长度限制，单条控制在 3000 字以内
-        # 文章过长则分多条发送，每条加页码
-        MAX_LEN = 2800
-        if len(content) <= MAX_LEN:
-            msg = f"📄 {title}\n\n---\n\n{content}\n\n---\n🤖 AI 资讯情报官"
+        readable = _to_feishu_readable_text(content)
+        account = art.get("account", "公众号")
+
+        # 飞书 webhook 文本消息有长度限制，单条控制在 3000 字以内。
+        # 这里直接发送可读正文，不要求用户打开本地 Markdown 文件。
+        MAX_LEN = 2600
+        header = (
+            f"【今日可发公众号正文】\n"
+            f"账号：{account}\n"
+            f"标题：{title}\n\n"
+            f"正文如下，直接在飞书里复制即可：\n\n"
+        )
+        footer = "\n\n---\n操作：复制上面正文 → 粘贴到公众号编辑器 → 发布前加一句你自己的真实判断。"
+
+        if len(header) + len(readable) + len(footer) <= MAX_LEN:
+            msg = f"{header}{readable}{footer}"
             if _send_text(msg):
                 logger.info(f"✅ 文章已发送: {title}")
             else:
                 all_ok = False
         else:
-            # 分条发送
-            total_parts = (len(content) + MAX_LEN - 1) // MAX_LEN
+            total_parts = (len(readable) + MAX_LEN - 1) // MAX_LEN
             for i in range(total_parts):
                 start = i * MAX_LEN
                 end = start + MAX_LEN
-                chunk = content[start:end]
+                chunk = readable[start:end]
                 if i == 0:
-                    msg = f"📄 {title} (1/{total_parts})\n\n---\n\n{chunk}"
+                    msg = f"{header}（第 {i+1}/{total_parts} 段）\n\n{chunk}"
+                elif i == total_parts - 1:
+                    msg = f"【续】{title}（第 {i+1}/{total_parts} 段）\n\n{chunk}{footer}"
                 else:
-                    msg = f"📄 {title} ({i+1}/{total_parts})\n\n{chunk}"
+                    msg = f"【续】{title}（第 {i+1}/{total_parts} 段）\n\n{chunk}"
                 if _send_text(msg):
                     logger.info(f"✅ 文章片段已发送: {title} ({i+1}/{total_parts})")
                 else:
@@ -131,47 +168,108 @@ def send_news_notification(items: list[dict], articles: list[dict]) -> bool:
     return all_ok
 
 
-def _build_news_card(items: list[dict], articles: list[dict]) -> dict:
-    """构建飞书消息卡片（图文并茂的资讯简报）"""
+def _build_text_summary(
+    items: list[dict],
+    articles: list[dict],
+    selections: list[dict],
+    draft_results: list[dict],
+) -> str:
+    """构建飞书纯文本运营摘要，不依赖互动卡片。"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    lines = [
+        f"【AI信息差公众号推送】{today}",
+        "",
+        f"今日抓取：{len(items)} 条候选资讯",
+        f"今日正文：{len(articles)} 篇，下面会直接发送全文",
+        "",
+        "今日选题：",
+    ]
+
+    if selections:
+        for idx, sel in enumerate(selections, 1):
+            account = sel["account"]
+            item = sel["item"]
+            score = sel["score"]
+            reasons = "；".join(score.get("reasons", []))
+            lines.extend([
+                f"{idx}. {account['account_name']}",
+                f"选题：{item.get('title', '')}",
+                f"来源：{item.get('source_name', '未知')}",
+                f"分数：总分 {score['total_score']}｜流量 {score['traffic_score']}｜收益 {score['money_score']}｜风险 {score['risk_score']}",
+                f"理由：{reasons}",
+                "",
+            ])
+    else:
+        lines.append("今天没有筛出高分选题，会使用兜底简报。")
+
+    lines.extend([
+        "草稿箱结果：",
+    ])
+
+    if draft_results:
+        for d in draft_results:
+            status = "成功" if d.get("ok") else "失败"
+            lines.append(f"- {status}：{d.get('account', '公众号')}｜{d.get('message', '')}")
+    else:
+        lines.append("- 未尝试创建草稿箱，可能未配置公众号 AppID/AppSecret。")
+
+    lines.extend([
+        "",
+        "操作：如果草稿箱成功，去公众号后台草稿箱检查即可；飞书后面仍会发两篇正文，方便你手机上直接看。",
+        "发布前建议加一句你自己的判断或体验，让文章更像真人账号。",
+    ])
+    return "\n".join(lines)
+
+
+def _build_news_card(items: list[dict], articles: list[dict], selections: list[dict] = None) -> dict:
+    """构建飞书消息卡片：双公众号运营看板 + 今日文章清单。"""
     today = datetime.now().strftime("%Y-%m-%d")
     source_names = list({it.get("source_name", "未知") for it in items})
     sources_text = " | ".join(source_names[:6])
+    selections = selections or []
 
-    # 精选资讯（最多展示 10 条）
-    top_items = items[:10]
-
-    # 构建标题和摘要
     elements = [
         {
             "tag": "markdown",
-            "content": f"**📡 今日抓取:** {len(items)} 条资讯\n"
-                       f"**📝 生成文章:** {len(articles)} 篇\n"
+            "content": f"**📡 今日抓取:** {len(items)} 条候选资讯\n"
+                       f"**📝 今日发稿:** {len(articles)} 篇（两个公众号各 1 篇）\n"
                        f"**🌐 信息来源:** {sources_text}",
         },
         {"tag": "hr"},
         {
             "tag": "markdown",
-            "content": "**🔥 热门资讯速览**",
+            "content": "**🎯 今日运营选题**",
         },
     ]
 
-    for i, item in enumerate(top_items, 1):
-        title = item["title"][:60]
-        source = item.get("source_name", "未知")
-        summary = item["summary"][:100] + ("..." if len(item["summary"]) > 100 else "")
-        url = item.get("url", "")
-
-        if url:
+    if selections:
+        for sel in selections:
+            account = sel["account"]
+            item = sel["item"]
+            score = sel["score"]
+            title = item.get("title", "")[:70]
+            source = item.get("source_name", "未知")
+            url = item.get("url", "")
+            reasons = "；".join(score.get("reasons", []))
             elements.append({
                 "tag": "markdown",
-                "content": f"{i}. **{title}** ({source})\n"
-                           f"   {summary}\n"
-                           f"   [🔗 查看原文]({url})",
+                "content": f"**{account['account_name']}**\n"
+                           f"选题：[{title}]({url})\n"
+                           f"来源：{source}\n"
+                           f"总分：**{score['total_score']}**｜流量 {score['traffic_score']}｜收益 {score['money_score']}｜风险 {score['risk_score']}\n"
+                           f"理由：{reasons}",
             })
-        else:
+            elements.append({"tag": "hr"})
+    else:
+        top_items = items[:5]
+        for i, item in enumerate(top_items, 1):
+            title = item["title"][:60]
+            source = item.get("source_name", "未知")
+            summary = item["summary"][:100] + ("..." if len(item["summary"]) > 100 else "")
+            url = item.get("url", "")
             elements.append({
                 "tag": "markdown",
-                "content": f"{i}. **{title}** ({source})\n   {summary}",
+                "content": f"{i}. **{title}** ({source})\n{summary}\n[🔗 查看原文]({url})",
             })
         elements.append({"tag": "hr"})
 
@@ -179,20 +277,20 @@ def _build_news_card(items: list[dict], articles: list[dict]) -> dict:
     if articles:
         elements.append({
             "tag": "markdown",
-            "content": "**📄 已生成文章（下方会逐篇发送全文）**",
+            "content": "**📄 下方会直接发送两篇正文，不需要打开本地 Markdown 文件**",
         })
         for art in articles:
-            art_type_label = "深度分析" if art['type'] == 'deep_dive' else "每日简报"
+            account = art.get("account", "公众号")
             elements.append({
                 "tag": "markdown",
-                "content": f"📄 **[{art_type_label}] {art['topic']}**",
+                "content": f"📄 **[{account}] {art['topic']}**",
             })
 
     # 底部
     elements.append({"tag": "hr"})
     elements.append({
         "tag": "note",
-        "content": f"👇 每篇文章的全文会作为单独消息发送，可直接阅读复制",
+        "content": f"👇 工作流：先看运营选题 → 再复制下方两篇全文 → 两个公众号各发一篇 → 次日按阅读/在看/关注复盘",
     })
 
     card = {
@@ -200,9 +298,9 @@ def _build_news_card(items: list[dict], articles: list[dict]) -> dict:
         "header": {
             "title": {
                 "tag": "plain_text",
-                "content": f"📰 AI 资讯简报 | {today}",
+                "content": f"🧭 双公众号运营看板 | {today}",
             },
-            "template": "blue",
+            "template": "green",
         },
         "elements": elements,
     }

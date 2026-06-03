@@ -15,6 +15,8 @@ from typing import Optional
 import feedparser
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 from config import RSS_SOURCES, RSS_FEEDS, MAX_ITEMS_PER_SOURCE, CACHE_DIR, DATA_DIR
 
@@ -32,16 +34,63 @@ HEADERS = {
     "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
 }
 
+_REQUEST_ERRORS: dict[str, str] = {}
+_FETCH_STATS: list[dict] = []
+_SESSION = requests.Session()
+_SESSION.mount(
+    "http://",
+    HTTPAdapter(
+        max_retries=Retry(
+            total=2,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+        )
+    ),
+)
+_SESSION.mount(
+    "https://",
+    HTTPAdapter(
+        max_retries=Retry(
+            total=2,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["GET"],
+        )
+    ),
+)
+
+
+def _reset_fetch_diagnostics():
+    _REQUEST_ERRORS.clear()
+    _FETCH_STATS.clear()
+
+
+def _record_fetch_stat(name: str, url: str, count: int, error: str = ""):
+    _FETCH_STATS.append({
+        "name": name,
+        "url": url,
+        "count": count,
+        "ok": not error,
+        "error": error,
+    })
+
+
+def get_fetch_stats() -> list[dict]:
+    return list(_FETCH_STATS)
+
 
 def fetch_url(url: str, timeout: int = 30) -> Optional[str]:
     """安全地获取 URL 内容"""
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=timeout)
+        resp = _SESSION.get(url, headers=HEADERS, timeout=timeout)
         resp.raise_for_status()
         # 自动检测编码
         resp.encoding = resp.apparent_encoding or "utf-8"
+        _REQUEST_ERRORS.pop(url, None)
         return resp.text
     except requests.RequestException as e:
+        _REQUEST_ERRORS[url] = str(e)
         logger.warning(f"请求失败 [{url}]: {e}")
         return None
 
@@ -89,10 +138,12 @@ def parse_huggingface_papers(url: str) -> list[dict]:
     api_url = "https://huggingface.co/api/daily_papers"
 
     try:
-        resp = requests.get(api_url, headers=HEADERS, timeout=15)
+        resp = _SESSION.get(api_url, headers=HEADERS, timeout=15)
         resp.raise_for_status()
         papers = resp.json()
+        _REQUEST_ERRORS.pop(url, None)
     except Exception as e:
+        _REQUEST_ERRORS[url] = str(e)
         logger.warning(f"HuggingFace API 请求失败: {e}")
         return []
 
@@ -239,6 +290,48 @@ def parse_producthunt(url: str) -> list[dict]:
     return items
 
 
+def parse_generic_news_page(url: str, selector: str = "a") -> list[dict]:
+    """抓取中文资讯站列表页，提取可读性较高的新闻链接。"""
+    html = fetch_url(url)
+    if not html:
+        return []
+
+    soup = BeautifulSoup(html, "html.parser")
+    items = []
+    seen_links = set()
+
+    for link_el in soup.select(selector)[:MAX_ITEMS_PER_SOURCE * 8]:
+        title = link_el.get_text(" ", strip=True)
+        href = link_el.get("href", "")
+        if not title or not href:
+            continue
+        if len(title) < 8 or len(title) > 90:
+            continue
+        if href.startswith("#") or href.startswith("javascript:"):
+            continue
+        if not href.startswith("http"):
+            href = requests.compat.urljoin(url, href)
+        if href in seen_links:
+            continue
+
+        parent_text = link_el.parent.get_text(" ", strip=True) if link_el.parent else ""
+        summary = parent_text.replace(title, "").strip()
+        summary = re.sub(r"\s+", " ", summary)[:500]
+
+        seen_links.add(href)
+        items.append({
+            "title": title,
+            "url": href,
+            "summary": summary,
+            "source": url,
+            "published": datetime.now(timezone.utc),
+        })
+        if len(items) >= MAX_ITEMS_PER_SOURCE:
+            break
+
+    return items
+
+
 def _is_recent(item: dict, hours: int = 48) -> bool:
     """判断条目是否在指定小时内发布"""
     if item.get("published"):
@@ -256,6 +349,7 @@ def _is_advertising(item: dict) -> bool:
         "限时优惠", "点击购买", "注册送", "免费领取",
         "割韭菜", "暴富", "月入过万", "被动收入",
         "限时特价", "立即下单", "买一送一",
+        "通讯会员", "加入会员", "购买会员", "立即订阅", "限时订阅",
     ]
     return any(kw in text for kw in ad_keywords)
 
@@ -283,6 +377,7 @@ def save_seen_ids(ids: set):
 def fetch_all() -> list[dict]:
     """执行全量抓取，返回所有去重后的有效条目"""
     logger.info("🚀 开始全量抓取...")
+    _reset_fetch_diagnostics()
 
     all_items = []
     parsers = {
@@ -304,11 +399,15 @@ def fetch_all() -> list[dict]:
                 items = parser(url)
                 break
         else:
-            items = parse_feed(url)
+            if source.get("type") == "webpage":
+                items = parse_generic_news_page(url, source.get("selector", "a"))
+            else:
+                items = parse_feed(url)
 
         for item in items:
             item["source_name"] = name
         all_items.extend(items)
+        _record_fetch_stat(name, url, len(items), _REQUEST_ERRORS.get(url, ""))
         logger.info(f"   → 获取 {len(items)} 条")
 
     # 抓取额外 RSS Feed
@@ -320,6 +419,7 @@ def fetch_all() -> list[dict]:
         for item in items:
             item["source_name"] = name
         all_items.extend(items)
+        _record_fetch_stat(name, url, len(items), _REQUEST_ERRORS.get(url, ""))
         logger.info(f"   → 获取 {len(items)} 条")
 
     # 去重 & 过滤

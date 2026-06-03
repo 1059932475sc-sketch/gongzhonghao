@@ -2,21 +2,32 @@ name: 📰 AI资讯情报官 - 每日自动运行
 
 on:
   schedule:
-    # 早上 8:00 北京时间 (UTC 0:00)
-    - cron: '0 0 * * *'
-    # 仅早上 8:00 运行一次
+    # 晚上 9:30 北京时间 (UTC 13:30)
+    - cron: '30 13 * * *'
+    # 每天北京时间 21:30 运行一次
   # 也可以手动触发
   workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ai-news-daily
+  cancel-in-progress: false
 
 jobs:
   run-pipeline:
     name: 抓取 → 分析 → 生成 → 推飞书
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    env:
+      TZ: Asia/Shanghai
 
     steps:
       - name: 检出代码
         uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: 检查今日是否已运行（去重锁）
         id: check_run
@@ -46,6 +57,25 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
+      - name: 检查必要 Secrets
+        run: |
+          missing=0
+          for key in OPENAI_API_KEY OPENAI_BASE_URL LLM_MODEL FEISHU_WEBHOOK_URL; do
+            if [ -z "${!key}" ]; then
+              echo "❌ 缺少必填 Secret: $key"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "✅ 必填 Secrets 已就绪"
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+
       - name: 安装依赖
         run: |
           pip install -r ai-news-assistant/requirements.txt
@@ -58,19 +88,23 @@ jobs:
           OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
           LLM_MODEL=${{ secrets.LLM_MODEL }}
           FEISHU_WEBHOOK_URL=${{ secrets.FEISHU_WEBHOOK_URL }}
+          WECHAT_APPID=${{ secrets.WECHAT_APPID }}
+          WECHAT_APPSECRET=${{ secrets.WECHAT_APPSECRET }}
           ENVEOF
           echo "✅ .env 文件已创建"
 
       - name: 运行情报流水线（推送到飞书）
         run: |
           cd ai-news-assistant
-          python3 main.py --feishu 2>&1
+          ./run.sh --feishu 2>&1
           echo "✅ 流水线执行完毕"
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+          WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
+          WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
 
       - name: 📊 发送每日市场简报到飞书
         run: |
@@ -79,6 +113,35 @@ jobs:
           echo "✅ 市场简报已发送"
         env:
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+
+      - name: 校验抓取结果
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from datetime import datetime
+
+          today = datetime.now().strftime("%Y-%m-%d")
+          report_path = Path("ai-news-assistant/data") / f"report_{today}.json"
+          if not report_path.exists():
+              raise SystemExit(f"未找到执行报告: {report_path}")
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          fetch_count = report.get("抓取数量", 0)
+          errors = report.get("错误摘要", [])
+          article_count = len(report.get("生成文章", []))
+          llm_status = report.get("模型状态", {})
+
+          print(f"抓取数量: {fetch_count}")
+          print(f"文章数量: {article_count}")
+          print(f"错误摘要: {len(errors)} 条")
+          print(f"模型状态: {llm_status}")
+
+          if fetch_count == 0 and errors:
+              raise SystemExit("抓取结果为 0 且存在源站错误，判定为异常失败")
+          if llm_status.get("mode") == "fallback":
+              raise SystemExit(f"模型调用进入降级模式: {llm_status.get('errors', [])}")
+          PY
 
       - name: 记录今日运行时间戳
         if: success()
@@ -91,8 +154,11 @@ jobs:
           git push
 
       - name: 上传生成的文章
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: ai-news-articles
-          path: ai-news-assistant/output/
+          path: |
+            ai-news-assistant/output/
+            ai-news-assistant/data/
           retention-days: 7
