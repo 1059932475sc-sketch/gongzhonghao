@@ -27,6 +27,8 @@ fi
 MODE="手动发布模式（生成文章到 output/ 目录）"
 if [[ "$1" == "--publish" ]]; then
     MODE="自动发布模式（会尝试发到公众号）"
+elif [[ "$1" == "--feishu" ]]; then
+    MODE="单公众号 AI 信息差模式（生成 1 篇文章并推送到飞书）"
 fi
 
 echo "📋 模式: $MODE"

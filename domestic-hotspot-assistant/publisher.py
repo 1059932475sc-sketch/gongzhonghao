@@ -60,6 +60,18 @@ class WeChatPublisher:
         self.appid = WECHAT_APPID
         self.appsecret = WECHAT_APPSECRET
         self._token: Optional[str] = None
+        self.last_error = ""
+
+    def _set_error(self, message: str) -> None:
+        self.last_error = message
+        logger.error(message)
+
+    def _format_wechat_error(self, data: dict) -> str:
+        errcode = data.get("errcode")
+        errmsg = data.get("errmsg", "")
+        if errcode == 40164:
+            return f"微信接口被 IP 白名单拦截（40164）: {errmsg}"
+        return f"微信接口错误（{errcode}）: {errmsg or data}"
 
     def get_access_token(self) -> Optional[str]:
         if self._token:
@@ -70,9 +82,10 @@ class WeChatPublisher:
             timeout=10,
         ).json()
         if "access_token" not in data:
-            logger.error(f"获取 token 失败: {data}")
+            self._set_error(f"获取 access_token 失败，{self._format_wechat_error(data)}")
             return None
         self._token = data["access_token"]
+        self.last_error = ""
         return self._token
 
     def upload_placeholder_cover(self) -> Optional[str]:
@@ -89,8 +102,9 @@ class WeChatPublisher:
                 timeout=20,
             ).json()
         if "media_id" not in data:
-            logger.error(f"上传占位封面失败: {data}")
+            self._set_error(f"上传占位封面失败，{self._format_wechat_error(data)}")
             return None
+        self.last_error = ""
         return data["media_id"]
 
     def markdown_to_html(self, markdown: str) -> str:
@@ -115,7 +129,7 @@ class WeChatPublisher:
         token = self.get_access_token()
         thumb = self.upload_placeholder_cover()
         if not token or not thumb:
-            return False, "token 或占位封面不可用"
+            return False, self.last_error or "token 或占位封面不可用"
         api_title = compact_title(title)
         payload = {
             "articles": [{
@@ -138,5 +152,6 @@ class WeChatPublisher:
             timeout=20,
         ).json()
         if "media_id" in data or data.get("errcode") == 0:
+            self.last_error = ""
             return True, f"草稿已创建：{api_title}（media_id: {data.get('media_id')}）"
-        return False, f"草稿创建失败：{data}"
+        return False, f"草稿创建失败，{self._format_wechat_error(data)}"
