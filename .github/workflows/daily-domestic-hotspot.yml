@@ -1,4 +1,4 @@
-name: 🏠 国内热点 - 每日草稿箱
+name: 🏠 国内热点 - 每日飞书推送
 
 on:
   schedule:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   run-pipeline:
-    name: 抓取 → 筛选 → 生成 → 进草稿箱
+    name: 抓取 → 筛选 → wewrite排版 → 推飞书
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -34,7 +34,7 @@ jobs:
       - name: 检查必要 Secrets
         run: |
           missing=0
-          for key in WECHAT_APPID WECHAT_APPSECRET; do
+          for key in FEISHU_WEBHOOK_URL; do
             if [ -z "${!key}" ]; then
               echo "❌ 缺少必填 Secret: $key"
               missing=1
@@ -45,25 +45,24 @@ jobs:
           fi
           echo "✅ 必填 Secrets 已就绪"
         env:
-          WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
-          WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
 
       - name: 安装依赖
         run: |
-          pip install requests beautifulsoup4 pillow
+          pip install requests beautifulsoup4 pillow markdown pyyaml cssutils
 
       - name: 创建 .env 文件
         run: |
           cat > domestic-hotspot-assistant/.env << 'ENVEOF'
-          WECHAT_APPID=${{ secrets.WECHAT_APPID }}
-          WECHAT_APPSECRET=${{ secrets.WECHAT_APPSECRET }}
+          FEISHU_WEBHOOK_URL=${{ secrets.FEISHU_WEBHOOK_URL }}
+          WEWRITE_THEME=${{ secrets.WEWRITE_THEME }}
           ENVEOF
           echo "✅ .env 文件已创建"
 
       - name: 运行国内热点流水线
         run: |
           cd domestic-hotspot-assistant
-          ./run.sh 2>&1
+          ./run.sh --feishu 2>&1
           echo "✅ 流水线执行完毕"
 
       - name: 校验生成结果
@@ -80,15 +79,18 @@ jobs:
 
           report = json.loads(report_path.read_text(encoding="utf-8"))
           articles = report.get("articles", [])
+          publish_status = report.get("publish_status", "")
+          feishu_ok = report.get("feishu_ok", False)
           print(f"抓取数量: {report.get('fetched', 0)}")
           print(f"文章数量: {len(articles)}")
+          print(f"发布状态: {publish_status}")
 
           if report.get("fetched", 0) == 0:
               raise SystemExit("国内热点抓取结果为 0")
           if len(articles) != 1:
               raise SystemExit(f"国内热点应生成 1 篇，实际为 {len(articles)}")
-          if not articles[0].get("draft_ok"):
-              raise SystemExit(f"草稿箱创建失败: {articles[0].get('draft_message')}")
+          if not feishu_ok:
+              raise SystemExit(f"国内热点飞书推送失败: {publish_status}")
           PY
 
       - name: 上传产物

@@ -25,6 +25,7 @@ if _env_path.exists():
 
 WECHAT_APPID = os.getenv("WECHAT_APPID", "")
 WECHAT_APPSECRET = os.getenv("WECHAT_APPSECRET", "")
+FEISHU_WEBHOOK_URL = os.getenv("FEISHU_WEBHOOK_URL", "")
 
 
 ARTICLE_COUNT = 1

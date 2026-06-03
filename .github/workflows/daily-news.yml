@@ -1,4 +1,4 @@
-name: 📰 AI信息差 - 每日草稿箱
+name: 📰 AI信息差 - 每日飞书推送
 
 on:
   schedule:
@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   run-pipeline:
-    name: 抓取 → 分析 → 生成 → 进草稿箱
+    name: 抓取 → 分析 → wewrite排版 → 推飞书
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -36,7 +36,7 @@ jobs:
       - name: 检查必要 Secrets
         run: |
           missing=0
-          for key in OPENAI_API_KEY OPENAI_BASE_URL LLM_MODEL WECHAT_APPID WECHAT_APPSECRET; do
+          for key in OPENAI_API_KEY OPENAI_BASE_URL LLM_MODEL FEISHU_WEBHOOK_URL; do
             if [ -z "${!key}" ]; then
               echo "❌ 缺少必填 Secret: $key"
               missing=1
@@ -50,13 +50,12 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
-          WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
-          WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
 
       - name: 安装依赖
         run: |
           pip install -r ai-news-assistant/requirements.txt
-          pip install python-dotenv
+          pip install python-dotenv markdown pyyaml cssutils
 
       - name: 创建 .env 文件
         run: |
@@ -65,8 +64,7 @@ jobs:
           OPENAI_BASE_URL=${{ secrets.OPENAI_BASE_URL }}
           LLM_MODEL=${{ secrets.LLM_MODEL }}
           FEISHU_WEBHOOK_URL=${{ secrets.FEISHU_WEBHOOK_URL }}
-          WECHAT_APPID=${{ secrets.WECHAT_APPID }}
-          WECHAT_APPSECRET=${{ secrets.WECHAT_APPSECRET }}
+          WEWRITE_THEME=${{ secrets.WEWRITE_THEME }}
           ENVEOF
           echo "✅ .env 文件已创建"
 
@@ -84,8 +82,7 @@ jobs:
           OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
-          WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
+          WEWRITE_THEME: ${{ secrets.WEWRITE_THEME }}
 
       - name: 校验抓取结果
         run: |
@@ -103,23 +100,24 @@ jobs:
           fetch_count = report.get("抓取数量", 0)
           errors = report.get("错误摘要", [])
           articles = report.get("生成文章", [])
-          drafts = report.get("草稿箱", [])
           article_count = len(report.get("生成文章", []))
           llm_status = report.get("模型状态", {})
+          publish_status = report.get("发布状态", "")
 
           print(f"抓取数量: {fetch_count}")
           print(f"文章数量: {article_count}")
           print(f"错误摘要: {len(errors)} 条")
           print(f"模型状态: {llm_status}")
+          print(f"发布状态: {publish_status}")
 
           if fetch_count == 0 and errors:
               raise SystemExit("抓取结果为 0 且存在源站错误，判定为异常失败")
           if len(articles) != 1:
               raise SystemExit(f"AI 信息差应生成 1 篇，实际为 {len(articles)}")
-          if len(drafts) != 1 or not drafts[0].get("ok"):
-              raise SystemExit(f"AI 草稿箱创建失败: {drafts}")
           if llm_status.get("mode") == "fallback":
               raise SystemExit(f"模型调用进入降级模式: {llm_status.get('errors', [])}")
+          if "飞书推送成功" not in publish_status:
+              raise SystemExit(f"AI 飞书推送失败: {publish_status}")
           PY
 
       - name: 上传生成的文章

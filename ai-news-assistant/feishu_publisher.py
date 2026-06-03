@@ -9,10 +9,17 @@ import logging
 import re
 from datetime import datetime
 from pathlib import Path
+import sys
 
 import requests
 
 from config import FEISHU_WEBHOOK_URL
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from wewrite_bridge import render_markdown_with_wewrite
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +135,14 @@ def send_news_notification(
 
         readable = _to_feishu_readable_text(content)
         account = art.get("account", "公众号")
+        themed = render_markdown_with_wewrite(path)
+        theme_line = ""
+        if themed:
+            theme_line = (
+                f"排版主题：{themed['theme']}\n"
+                f"预览文件：{themed['preview_html_path']}\n"
+                f"发布文件：{themed['body_html_path']}\n\n"
+            )
 
         # 飞书 webhook 文本消息有长度限制，单条控制在 3000 字以内。
         # 这里直接发送可读正文，不要求用户打开本地 Markdown 文件。
@@ -136,6 +151,7 @@ def send_news_notification(
             f"【今日可发公众号正文】\n"
             f"账号：{account}\n"
             f"标题：{title}\n\n"
+            f"{theme_line}"
             f"正文如下，直接在飞书里复制即可：\n\n"
         )
         footer = "\n\n---\n操作：复制上面正文 → 粘贴到公众号编辑器 → 发布前加一句你自己的真实判断。"
