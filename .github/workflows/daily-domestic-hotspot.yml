@@ -1,0 +1,102 @@
+name: 🏠 国内热点 - 每日草稿箱
+
+on:
+  schedule:
+    # 早上 08:10 北京时间 (UTC 00:10)
+    - cron: '10 0 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: domestic-hotspot-daily
+  cancel-in-progress: false
+
+jobs:
+  run-pipeline:
+    name: 抓取 → 筛选 → 生成 → 进草稿箱
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      TZ: Asia/Shanghai
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v6
+
+      - name: 设置 Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: 检查必要 Secrets
+        run: |
+          missing=0
+          for key in WECHAT_APPID WECHAT_APPSECRET; do
+            if [ -z "${!key}" ]; then
+              echo "❌ 缺少必填 Secret: $key"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "✅ 必填 Secrets 已就绪"
+        env:
+          WECHAT_APPID: ${{ secrets.WECHAT_APPID }}
+          WECHAT_APPSECRET: ${{ secrets.WECHAT_APPSECRET }}
+
+      - name: 安装依赖
+        run: |
+          pip install requests beautifulsoup4 pillow
+
+      - name: 创建 .env 文件
+        run: |
+          cat > domestic-hotspot-assistant/.env << 'ENVEOF'
+          WECHAT_APPID=${{ secrets.WECHAT_APPID }}
+          WECHAT_APPSECRET=${{ secrets.WECHAT_APPSECRET }}
+          ENVEOF
+          echo "✅ .env 文件已创建"
+
+      - name: 运行国内热点流水线
+        run: |
+          cd domestic-hotspot-assistant
+          ./run.sh 2>&1
+          echo "✅ 流水线执行完毕"
+
+      - name: 校验生成结果
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          from datetime import datetime
+
+          today = datetime.now().strftime("%Y-%m-%d")
+          report_path = Path("domestic-hotspot-assistant/data") / f"report_{today}.json"
+          if not report_path.exists():
+              raise SystemExit(f"未找到执行报告: {report_path}")
+
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          articles = report.get("articles", [])
+          print(f"抓取数量: {report.get('fetched', 0)}")
+          print(f"文章数量: {len(articles)}")
+
+          if report.get("fetched", 0) == 0:
+              raise SystemExit("国内热点抓取结果为 0")
+          if len(articles) != 1:
+              raise SystemExit(f"国内热点应生成 1 篇，实际为 {len(articles)}")
+          if not articles[0].get("draft_ok"):
+              raise SystemExit(f"草稿箱创建失败: {articles[0].get('draft_message')}")
+          PY
+
+      - name: 上传产物
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: domestic-hotspot-output
+          path: |
+            domestic-hotspot-assistant/output/
+            domestic-hotspot-assistant/data/
+          retention-days: 7

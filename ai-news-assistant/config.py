@@ -40,6 +40,30 @@ for d in [OUTPUT_DIR, DATA_DIR, CACHE_DIR]:
 # ============================================================
 RSS_SOURCES = [
     {
+        "name": "AIbase 中文资讯",
+        "url": "https://www.aibase.com/zh/news",
+        "type": "webpage",
+        "selector": "a",
+    },
+    {
+        "name": "量子位",
+        "url": "https://www.qbitai.com/",
+        "type": "webpage",
+        "selector": "a",
+    },
+    {
+        "name": "机器之心",
+        "url": "https://www.jiqizhixin.com/",
+        "type": "webpage",
+        "selector": "a",
+    },
+    {
+        "name": "36氪 AI",
+        "url": "https://www.36kr.com/information/AI/",
+        "type": "webpage",
+        "selector": "a",
+    },
+    {
         "name": "Hugging Face Papers",
         "url": "https://huggingface.co/papers",
         "type": "webpage",  # HuggingFace papers 没有 RSS，抓取页面
@@ -136,3 +160,40 @@ WRITER_STYLE = "资深公众号科技博主「布丁」"
 TONE = "像朋友聊天一样讲AI，说人话、有态度、不装逼"
 TARGET_AUDIENCE = "中文科技爱好者、AI 从业者、产品经理"
 ARTICLE_LENGTH = "1500-2000 字"
+
+# ============================================================
+# 单公众号 AI 选题配置
+# ============================================================
+# 每天生成 1 篇 AI 信息差文章，进入同一个公众号草稿箱。
+PUBLIC_ACCOUNT_PROFILES = [
+    {
+        "account_name": "AI信息差",
+        "article_type": "tools",
+        "positioning": "面向普通人的 AI 信息差公众号，主打省钱、提效、避坑、赚钱机会",
+        "audience": "想用 AI 改善工作和生活，但不想看硬核技术论文的普通读者",
+        "content_goal": "让读者快速看懂今天最值得关注的一条 AI 变化，并愿意收藏转发",
+        "preferred_angles": ["办公提效", "国产AI工具", "教程清单", "避坑测评", "副业机会", "电商/短视频"],
+        "monetization": "工具联盟、资料包、课程、社群、咨询",
+    },
+]
+
+TRAFFIC_KEYWORDS = [
+    "普通人", "小白", "教程", "攻略", "清单", "避坑", "实测", "免费",
+    "国产", "替代", "效率", "办公", "PPT", "Excel", "简历", "公文",
+    "写作", "短视频", "剪辑", "小红书", "抖音", "电商", "带货",
+    "副业", "赚钱", "接单", "涨粉", "流量", "变现", "案例",
+    "video", "creator", "content", "tool", "automation",
+]
+
+MONEY_KEYWORDS = [
+    "赚钱", "副业", "变现", "商业化", "广告", "课程", "社群", "接单",
+    "电商", "带货", "投放", "私域", "老板", "创业", "SaaS", "工具",
+    "付费", "会员", "降本", "提效",
+    "money", "income", "earn", "revenue", "creator", "commerce",
+]
+
+RISK_KEYWORDS = [
+    "暴富", "躺赚", "月入十万", "稳赚", "割韭菜", "破解版", "灰产",
+    "赌博", "色情", "擦边", "代写论文", "违规",
+    "通讯会员", "加入会员", "购买会员", "立即订阅", "限时订阅",
+]
