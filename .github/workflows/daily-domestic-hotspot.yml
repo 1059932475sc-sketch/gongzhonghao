@@ -2,8 +2,8 @@ name: 🏠 国内热点 - 每日飞书推送
 
 on:
   schedule:
-    # 早上 08:10 北京时间 (UTC 00:10)
-    - cron: '10 0 * * *'
+    # 早上 08:00 北京时间 (UTC 00:00)
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 permissions:
@@ -87,8 +87,8 @@ jobs:
 
           if report.get("fetched", 0) == 0:
               raise SystemExit("国内热点抓取结果为 0")
-          if len(articles) != 1:
-              raise SystemExit(f"国内热点应生成 1 篇，实际为 {len(articles)}")
+          if len(articles) != 2:
+              raise SystemExit(f"国内热点应生成 2 篇，实际为 {len(articles)}")
           if not feishu_ok:
               raise SystemExit(f"国内热点飞书推送失败: {publish_status}")
           PY
