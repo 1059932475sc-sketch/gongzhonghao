@@ -103,6 +103,46 @@ def fetch_zhihu_hot() -> list[dict]:
     return dedupe(items)
 
 
+def fetch_toutiao_hot() -> list[dict]:
+    url = "https://www.toutiao.com/hot-event/hot-board/?origin=toutiao_pc"
+    try:
+        data = requests.get(url, headers=HEADERS, timeout=15).json()
+    except Exception as e:
+        logger.warning(f"头条热榜抓取失败: {e}")
+        return []
+
+    items = []
+    for row in data.get("data", [])[:80]:
+        title = normalize_title(row.get("Title", ""))
+        summary = normalize_title(row.get("Abstract", "") or row.get("LabelDesc", ""))
+        link = row.get("Url") or url
+        if title and not looks_mojibake(title + summary) and not blocked(title + summary):
+            items.append({"title": title, "summary": summary, "source": "头条热榜", "url": link})
+    return dedupe(items)
+
+
+def fetch_douyin_hot() -> list[dict]:
+    url = "https://www.iesdouyin.com/web/api/v2/hotsearch/billboard/word/"
+    try:
+        data = requests.get(url, headers=HEADERS, timeout=15).json()
+    except Exception as e:
+        logger.warning(f"抖音热榜抓取失败: {e}")
+        return []
+
+    items = []
+    for row in data.get("word_list", [])[:80]:
+        title = normalize_title(row.get("word", ""))
+        summary = normalize_title(str(row.get("sentence_tag", "")))
+        if title and not looks_mojibake(title + summary) and not blocked(title + summary):
+            items.append({
+                "title": title,
+                "summary": summary,
+                "source": "抖音热榜",
+                "url": f"https://www.douyin.com/search/{title}",
+            })
+    return dedupe(items)
+
+
 def dedupe(items: list[dict]) -> list[dict]:
     seen = set()
     out = []
@@ -117,7 +157,7 @@ def dedupe(items: list[dict]) -> list[dict]:
 
 def fetch_all() -> list[dict]:
     all_items = []
-    for fetcher in [fetch_weibo_hot, fetch_baidu_top, fetch_zhihu_hot]:
+    for fetcher in [fetch_weibo_hot, fetch_baidu_top, fetch_zhihu_hot, fetch_toutiao_hot, fetch_douyin_hot]:
         all_items.extend(fetcher())
     all_items = dedupe(all_items)
     path = DATA_DIR / f"raw_{datetime.now().strftime('%Y-%m-%d')}.json"

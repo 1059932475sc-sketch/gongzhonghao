@@ -1,5 +1,5 @@
 """
-国内社会热点公众号主流程：每天两篇，可推送飞书。
+国内社会热点公众号主流程：每天六篇，可推送飞书。
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 def run(enable_publish: bool = True, enable_feishu: bool = False) -> dict:
     items = fetch_all()
-    selected = select_topics(items, 12)
+    selected = select_topics(items, max(ARTICLE_COUNT * 3, 12))
     report = {
         "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "fetched": len(items),

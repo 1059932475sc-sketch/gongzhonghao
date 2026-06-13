@@ -87,8 +87,8 @@ jobs:
 
           if report.get("fetched", 0) == 0:
               raise SystemExit("国内热点抓取结果为 0")
-          if len(articles) != 2:
-              raise SystemExit(f"国内热点应生成 2 篇，实际为 {len(articles)}")
+          if len(articles) != 6:
+              raise SystemExit(f"国内热点应生成 6 篇，实际为 {len(articles)}")
           if not feishu_ok:
               raise SystemExit(f"国内热点飞书推送失败: {publish_status}")
           PY
